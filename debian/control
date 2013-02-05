@@ -1,0 +1,12 @@
+Source: ros-groovy-rocon-hub-client
+Section: misc
+Priority: extra
+Maintainer: Daniel Stonier <d.stonier@gmail.com>, Jihoon Lee <jihoonlee.in@gmail.com>
+Build-Depends: debhelper (>= 7.0.50~), ros-groovy-catkin
+Homepage: http://ros.org/wiki/rocon_hub_client
+Standards-Version: 3.9.2
+
+Package: ros-groovy-rocon-hub-client
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, ros-groovy-redis,ros-groovy-rospy,ros-groovy-rocon-gateway
+Description: Client api for easily accessing the rocon hub.
