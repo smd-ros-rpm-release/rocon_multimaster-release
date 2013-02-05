@@ -1,0 +1,12 @@
+Source: ros-groovy-rocon-hub
+Section: misc
+Priority: extra
+Maintainer: Daniel Stonier <d.stonier@gmail.com>, Jihoon Lee <jihoonlee.in@gmail.com>, Piyush Khandelwal <piyushk@gmail.com>
+Build-Depends: debhelper (>= 7.0.50~), ros-groovy-catkin
+Homepage: http://ros.org/wiki/rocon_hub
+Standards-Version: 3.9.2
+
+Package: ros-groovy-rocon-hub
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, avahi-daemon,ros-groovy-redis,redis-server,avahi-utils
+Description: A hub acts as a shared key-value store for multiple ros systems (primarily used by gateways).
