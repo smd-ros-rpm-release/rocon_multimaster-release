@@ -1,0 +1,12 @@
+Source: ros-groovy-rocon-test
+Section: misc
+Priority: extra
+Maintainer: Daniel Stonier <d.stonier@gmail.com>
+Build-Depends: debhelper (>= 7.0.50~), ros-groovy-catkin
+Homepage: http://ros.org/wiki/rocon_test
+Standards-Version: 3.9.2
+
+Package: ros-groovy-rocon-test
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, ros-groovy-rocon-utilities, ros-groovy-roslaunch, ros-groovy-rospy, ros-groovy-rostest, ros-groovy-rosunit
+Description: Rocon test framework (i.e. multi-launch rostest framework).
