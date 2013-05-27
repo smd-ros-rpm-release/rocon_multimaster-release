@@ -1,3 +1,3 @@
 [git-buildpackage]
-upstream-branch=release/rocon_hub/0.3.0
+upstream-branch=@(release_tag)
 upstream-tree=branch
