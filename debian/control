@@ -1,0 +1,12 @@
+Source: ros-groovy-rocon-utilities
+Section: misc
+Priority: extra
+Maintainer: Daniel Stonier <d.stonier@gmail.com>
+Build-Depends: debhelper (>= 7.0.50~), ros-groovy-catkin, ros-groovy-rostest
+Homepage: http://ros.org/wiki/rocon_utilities
+Standards-Version: 3.9.2
+
+Package: ros-groovy-rocon-utilities
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, ros-groovy-rospy, ros-groovy-rosunit, ros-groovy-std-msgs
+Description: Utility python code for rocon packages.
