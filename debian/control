@@ -1,0 +1,12 @@
+Source: ros-hydro-rocon-hub
+Section: misc
+Priority: extra
+Maintainer: Daniel Stonier <d.stonier@gmail.com>, Jihoon Lee <jihoonlee.in@gmail.com>, Piyush Khandelwal <piyushk@gmail.com>
+Build-Depends: debhelper (>= 7.0.50~), ros-hydro-catkin
+Homepage: http://ros.org/wiki/rocon_hub
+Standards-Version: 3.9.2
+
+Package: ros-hydro-rocon-hub
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, avahi-daemon, avahi-utils, redis-server, ros-hydro-redis
+Description: A hub acts as a shared key-value store for multiple ros systems (primarily used by gateways).
