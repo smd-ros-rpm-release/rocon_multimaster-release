@@ -1,0 +1,12 @@
+Source: ros-hydro-redis
+Section: misc
+Priority: extra
+Maintainer: Daniel Stonier <d.stonier@gmail.com>
+Build-Depends: debhelper (>= 7.0.50~), ros-hydro-catkin
+Homepage: http://ros.org/wiki/redis
+Standards-Version: 3.9.2
+
+Package: ros-hydro-redis
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, 
+Description: The python redis client has a minor issue - it hangs on ctrl-c. This is a locally patched version that we can use directly until it is patched upstream. https://github.com/robotics-in-concert/rocon_multimaster/issues/30 Note - this package has to be named 'redis' so we can conveniently import as if we were using the python-redis package.
