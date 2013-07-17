@@ -204,8 +204,11 @@ class Gateway(object):
                 if existing_registration:
                     rospy.loginfo("Gateway : abandoning pulled connection %s[%s]" % (utils.format_rule(pull.rule), pull.gateway))
                     self.master.unregister(existing_registration)
-                    if hub:
-                        hub.remove_pull_details(pull.gateway, pull.rule.name, pull.rule.type, pull.rule.node)
+                    # This code was here, but causing bugs...actually it should never remove details from the hub, that is the
+                    # responsibility of the advertising gateway. TODO confirm this.
+                    #hub = remote_gateway_hub_index[pull.gateway][0]
+                    #if hub:
+                    #    hub.remove_pull_details(pull.gateway, pull.rule.name, pull.rule.type, pull.rule.node)
                     self.pulled_interface.registrations[existing_registration.connection.rule.type].remove(existing_registration)
                     state_changed = True
         if state_changed:
@@ -270,6 +273,27 @@ class Gateway(object):
     ##########################################################################
     # Incoming commands from local system (ros service callbacks)
     ##########################################################################
+
+    def ros_service_set_watcher_period(self, request):
+        '''
+          Configures the watcher period. This is useful to slow/speed up the
+          watcher loop. Quite often you want it polling quickly early while
+          configuring connections, but on long loops later when it does not have
+          to do very much except look for shutdown.
+
+          @param request
+          @type gateway_srvs.SetWatcherPeriodRequest
+          @return service response
+          @rtgateway_srvs.srv.SetWatcherPeriodResponse
+        '''
+        self.watcher_thread.set_watch_loop_period(request.period)
+        return gateway_srvs.SetWatcherPeriodResponse(self.watcher_thread.get_watch_loop_period().to_sec())
+
+    def ros_subscriber_force_update(self, data):
+        '''
+          Trigger a watcher loop update
+        '''
+        self.watcher_thread.trigger_update = True
 
     def ros_service_advertise(self, request):
         '''
