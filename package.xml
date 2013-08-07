@@ -1,6 +1,6 @@
 <package>
   <name>rocon_utilities</name>
-  <version>0.5.4</version>
+  <version>0.5.5</version>
   <description>
     Utility python code for rocon packages.
   </description>
@@ -16,6 +16,7 @@
   
   <!-- For Tests, could move tests out, but this is not a big overhead -->
   <build_depend>rostest</build_depend>
+  <run_depend>rosbash</run_depend>
   <run_depend>rosunit</run_depend>
   <run_depend>std_msgs</run_depend>
 
