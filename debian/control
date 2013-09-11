@@ -1,0 +1,12 @@
+Source: ros-hydro-rocon-gateway
+Section: misc
+Priority: extra
+Maintainer: Daniel Stonier <d.stonier@gmail.com>
+Build-Depends: debhelper (>= 7.0.50~), ros-hydro-catkin
+Homepage: http://ros.org/wiki/rocon_gateway
+Standards-Version: 3.9.2
+
+Package: ros-hydro-rocon-gateway
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, ros-hydro-gateway-msgs, ros-hydro-redis, ros-hydro-rocon-hub-client, ros-hydro-rocon-utilities, ros-hydro-roslib, ros-hydro-rospy, ros-hydro-rosservice, ros-hydro-rostopic, ros-hydro-zeroconf-msgs
+Description: A hub acts as a shared key-value store for multiple ros systems (primarily used by gateways).
