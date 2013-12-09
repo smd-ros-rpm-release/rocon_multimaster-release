@@ -1,0 +1,12 @@
+Source: ros-hydro-rocon-gateway-tests
+Section: misc
+Priority: extra
+Maintainer: Daniel Stonier <d.stonier@gmail.com>
+Build-Depends: debhelper (>= 7.0.50~), ros-hydro-catkin, ros-hydro-rocon-test
+Homepage: http://ros.org/wiki/rocon_gateway_tests
+Standards-Version: 3.9.2
+
+Package: ros-hydro-rocon-gateway-tests
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, ros-hydro-gateway-msgs, ros-hydro-rocon-gateway, ros-hydro-rocon-hub, ros-hydro-rocon-test, ros-hydro-roscpp-tutorials, ros-hydro-rospy, ros-hydro-rospy-tutorials
+Description: Testing programs for gateways.
