@@ -1,6 +1,6 @@
 <package>
   <name>rocon_hub_client</name>
-  <version>0.6.2</version>
+  <version>0.7.0</version>
   <description>
     Client api for discovery and connection to rocon hubs. It also has
     a few convenience api for manipulating data on the hub. 
@@ -16,11 +16,8 @@
 
   <buildtool_depend>catkin</buildtool_depend>
 
-  <run_depend>redis</run_depend>
+  <run_depend>gateway_msgs</run_depend>
   <run_depend>rospy</run_depend>
-  <run_depend>rocon_utilities</run_depend>
-
-  <export>
-    <rosdoc config="rosdoc.yaml"/>
-  </export>
+  <run_depend>rocon_python_redis</run_depend>
+  <run_depend>rocon_gateway_utils</run_depend>
 </package>

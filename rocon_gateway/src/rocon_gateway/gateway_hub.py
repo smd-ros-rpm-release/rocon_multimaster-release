@@ -1,75 +1,63 @@
-#!/usr/bin/env python
 #
 # License: BSD
-#   https://raw.github.com/robotics-in-concert/rocon_multimaster/master/rocon_gateway/LICENSE
+#
+#   https://raw.github.com/robotics-in-concert/rocon_multimaster/license/LICENSE
 #
 ###############################################################################
 # Imports
 ###############################################################################
 
-import redis
 import threading
 import rospy
 import re
 import utils
+from gateway_msgs.msg import RemoteRuleWithStatus as FlipStatus
 import gateway_msgs.msg as gateway_msgs
-import rocon_utilities
+import rocon_python_comms
+import rocon_python_utils
+import rocon_gateway_utils
 import rocon_hub_client
-from rocon_hub_client import hub_api
+import rocon_python_redis as redis
+import time
+from rocon_hub_client import hub_api, hub_client
 from rocon_hub_client.exceptions import HubConnectionLostError, \
-              HubNameNotFoundError, HubNotFoundError
+    HubNameNotFoundError, HubNotFoundError
 
-
-# local imports
 from .exceptions import GatewayUnavailableError
 
-
 ###############################################################################
-# Redis Callback Handler
+# Redis Connection Checker
 ##############################################################################
 
-class RedisListenerThread(threading.Thread):
+
+class HubConnectionCheckerThread(threading.Thread):
+
     '''
-      Tunes into the redis channels that have been subscribed to and
-      calls the apropriate callbacks.
+      Pings redis periodically to figure out if redis is still alive.
     '''
-    def __init__(self, redis_pubsub_server, remote_gateway_request_callbacks, hub_connection_lost_hook):
+
+    def __init__(self, ip, port, hub_connection_lost_hook):
         threading.Thread.__init__(self)
-        self._redis_pubsub_server = redis_pubsub_server
-        self._remote_gateway_request_callbacks = remote_gateway_request_callbacks
+        self.daemon = True  # clean shut down of thread when hub connection is lost
+        self.ping_frequency = 0.2  # Too spammy? # TODO Need to parametrize
         self._hub_connection_lost_hook = hub_connection_lost_hook
+        self.ip = ip
+        self.port = port
+        self.pinger = rocon_python_utils.network.Pinger(self.ip, self.ping_frequency)
+
+    def get_latency(self):
+        return self.pinger.get_latency()
 
     def run(self):
-        '''
-          Used as a callback for incoming requests on redis pubsub channels.
-
-          The received argument is a list of strings for 'flip':
-
-            - [0] - command : this one is 'flip'
-            - [1] - remote_gateway : the name of the gateway that is flipping to us
-            - [2] - remote_name
-            - [3] - remote_node
-            - [4] - type : one of ConnectionType.PUBLISHER etc
-            - [5] - type_info : a ros format type (e.g. std_msgs/String or service api)
-            - [6] - xmlrpc_uri : the xmlrpc node uri
-
-          The command 'unflip' is the same, not including args 5 and 6.
-        '''
-        try:
-            # This is a generator so it will keep spitting out (alt. to having a while loop here)
-            for r in self._redis_pubsub_server.listen():
-                if r['type'] != 'unsubscribe' and r['type'] != 'subscribe':
-                    command, source, contents = utils.deserialize_request(r['data'])
-                    rospy.logdebug("Gateway : redis listener received a channel publication from %s : [%s]" % (source, command))
-                    if command == 'flip':
-                        registration = utils.Registration(utils.get_connection_from_list(contents), source)
-                        self._remote_gateway_request_callbacks['flip'](registration)
-                    elif command == 'unflip':
-                        self._remote_gateway_request_callbacks['unflip'](utils.get_rule_from_list(contents), source)
-                    else:
-                        rospy.logerr("Gateway : received an unknown command from the hub.")
-        except redis.exceptions.ConnectionError:
-            self._hub_connection_lost_hook()
+        # This runs in the background to gather the latest connection statistics
+        # Note - it's not used in the keep alive check
+        self.pinger.start()
+        rate = rocon_python_comms.WallRate(self.ping_frequency)
+        alive = True
+        while alive:
+            alive = hub_client.ping_hub(self.ip, self.port)
+            rate.sleep()
+        self._hub_connection_lost_hook()
 
 ##############################################################################
 # Hub
@@ -97,18 +85,22 @@ class GatewayHub(rocon_hub_client.Hub):
         self._hub_connection_lost_gateway_hook = None
         self._firewall = 0
 
+        # Setting up some basic parameters in-case we use this API without registering a gateway
+        self._redis_keys['gatewaylist'] = hub_api.create_rocon_hub_key('gatewaylist')
+        self._unique_gateway_name = ''
+
     ##########################################################################
     # Hub Connections
     ##########################################################################
 
-    def register_gateway(self, firewall, unique_gateway_name, remote_gateway_request_callbacks, hub_connection_lost_gateway_hook, gateway_ip):
+    def register_gateway(self, firewall, unique_gateway_name, hub_connection_lost_gateway_hook, gateway_ip):
         '''
           Register a gateway with the hub.
 
           @param firewall
           @param unique_gateway_name
-          @param remote_gateway_request_callbacks
-          @param hub_connection_lost_hook : used to trigger Gateway.disengage_hub(hub) on lost hub connections in redis pubsub listener thread.
+          @param hub_connection_lost_gateway_hook : used to trigger Gateway.disengage_hub(hub)
+                 on lost hub connections in redis pubsub listener thread.
           @gateway_ip
 
           @raise HubConnectionLostError if for some reason, the redis server has become unavailable.
@@ -119,29 +111,51 @@ class GatewayHub(rocon_hub_client.Hub):
         self._redis_keys['gateway'] = hub_api.create_rocon_key(unique_gateway_name)
         self._redis_keys['firewall'] = hub_api.create_rocon_gateway_key(unique_gateway_name, 'firewall')
         self._firewall = 1 if firewall else 0
-        self._redis_keys['gatewaylist'] = hub_api.create_rocon_hub_key('gatewaylist')
-        self._remote_gateway_request_callbacks = remote_gateway_request_callbacks
         self._hub_connection_lost_gateway_hook = hub_connection_lost_gateway_hook
         if not self._redis_server.sadd(self._redis_keys['gatewaylist'], self._redis_keys['gateway']):
             # should never get here - unique should be unique
             pass
-        unused_ret = self._redis_server.sadd(self._redis_keys['gatewaylist'], self._redis_keys['gateway'])
+        self.mark_named_gateway_available(self._redis_keys['gateway'])
         self._redis_server.set(self._redis_keys['firewall'], self._firewall)
-        # I think we just used this for debugging, but we might want to hide it in future (it's the ros master hostname/ip)
+        # I think we just used this for debugging, but we might want to hide it in
+        # future (it's the ros master hostname/ip)
         self._redis_keys['ip'] = hub_api.create_rocon_gateway_key(unique_gateway_name, 'ip')
         self._redis_server.set(self._redis_keys['ip'], gateway_ip)
-        self._redis_channels['gateway'] = self._redis_keys['gateway']
-        self._redis_pubsub_server.subscribe(self._redis_channels['gateway'])
-        self.remote_gateway_listener_thread = RedisListenerThread(self._redis_pubsub_server, self._remote_gateway_request_callbacks, self._hub_connection_lost_hook)
-        self.remote_gateway_listener_thread.start()
+
+        self.private_key, public_key = utils.generate_private_public_key()
+        self._redis_keys['public_key'] = hub_api.create_rocon_gateway_key(unique_gateway_name, 'public_key')
+        old_key = self._redis_server.get(self._redis_keys['public_key'])
+        serialized_public_key = utils.serialize_key(public_key)
+        self._redis_server.set(self._redis_keys['public_key'], serialized_public_key)
+        if serialized_public_key != old_key:
+            rospy.loginfo('Gateway : Found existing mismatched public key on the hub. ' +
+                          'Requesting resend for all flip-ins.')
+            self._resend_all_flip_ins()
+
+        # Mark this gateway as now available
+        self._redis_server.sadd(self._redis_keys['gatewaylist'], self._redis_keys['gateway'])
+        self.hub_connection_checker_thread = HubConnectionCheckerThread(
+            self.ip, self.port, self._hub_connection_lost_hook)
+        self.hub_connection_checker_thread.start()
+        self.connection_lost_lock = threading.Lock()
+
+        # Let hub know we are alive
+        ping_key = hub_api.create_rocon_gateway_key(self._unique_gateway_name, ':ping')
+        self._redis_server.set(ping_key, True)
+        self._redis_server.expire(ping_key, gateway_msgs.ConnectionStatistics.MAX_TTL)
 
     def _hub_connection_lost_hook(self):
         '''
-          This gets triggered by the redis pubsub listener when the hub connection is lost.
+          This gets triggered by the redis connection checker thread when the hub connection is lost.
           The trigger is passed to the gateway who needs to remove the hub.
         '''
+        self.connection_lost_lock.acquire()
+        # should probably have a try: except AttributeError here as the following is not atomic.
         if self._hub_connection_lost_gateway_hook is not None:
+            rospy.loginfo("Gateway : Lost connection with hub. Attempting to disconnect...")
             self._hub_connection_lost_gateway_hook(self)
+            self._hub_connection_lost_gateway_hook = None
+        self.connection_lost_lock.release()
 
     def unregister_gateway(self):
         '''
@@ -151,20 +165,107 @@ class GatewayHub(rocon_hub_client.Hub):
           @rtype: bool
         '''
         try:
-            self._redis_pubsub_server.unsubscribe()
-            gateway_keys = self._redis_server.keys(self._redis_keys['gateway'] + ":*")
-            pipe = self._redis_server.pipeline()
-            pipe.delete(*gateway_keys)
-            pipe.srem(self._redis_keys['gatewaylist'], self._redis_keys['gateway'])
-            pipe.execute()
-            self._redis_channels = {}
+            self.unregister_named_gateway(self._redis_keys['gateway'])
         except (redis.exceptions.ConnectionError, redis.exceptions.ResponseError):
             # usually just means the hub has gone down just before us or is in the
-            # middel of doing so let it die nice and peacefully
-            # rospy.logwarn("Gateway : problem unregistering from the hub (likely that hub shutdown before the gateway).")
+            # middle of doing so let it die nice and peacefully
+            # rospy.logwarn("Gateway : problem unregistering from the hub " +
+            #               "(likely that hub shutdown before the gateway).")
             pass
         # should we not also shut down self.remote_gatew
         rospy.loginfo("Gateway : unregistered from the hub [%s]" % self.name)
+
+    def publish_network_statistics(self, statistics):
+        '''
+          Publish network interface information to the hub
+
+          @param statistics
+          @type gateway_msgs.RemoteGateway
+        '''
+        try:
+            network_info_available = hub_api.create_rocon_gateway_key(
+                self._unique_gateway_name, 'network:info_available')
+            self._redis_server.set(network_info_available, statistics.network_info_available)
+            if not statistics.network_info_available:
+                return
+            network_type = hub_api.create_rocon_gateway_key(self._unique_gateway_name, 'network:type')
+            self._redis_server.set(network_type, statistics.network_type)
+            # Let hub know that we are alive - even for wired connections. Perhaps something can
+            # go wrong for them too, though no idea what. Anyway, writing one entry is low cost
+            # and it makes the logic easier on the hub side.
+            ping_key = hub_api.create_rocon_gateway_key(self._unique_gateway_name, ':ping')
+            self._redis_server.set(ping_key, True)
+            self._redis_server.expire(ping_key, gateway_msgs.ConnectionStatistics.MAX_TTL)
+            # Update latency statistics
+            latency = self.hub_connection_checker_thread.get_latency()
+            self.update_named_gateway_latency_stats(self._unique_gateway_name, latency)
+            # If wired, don't worry about wireless statistics.
+            if statistics.network_type == gateway_msgs.RemoteGateway.WIRED:
+                return
+            wireless_bitrate_key = hub_api.create_rocon_gateway_key(self._unique_gateway_name, 'wireless:bitrate')
+            self._redis_server.set(wireless_bitrate_key, statistics.wireless_bitrate)
+            wireless_link_quality = hub_api.create_rocon_gateway_key(self._unique_gateway_name, 'wireless:quality')
+            self._redis_server.set(wireless_link_quality, statistics.wireless_link_quality)
+            wireless_signal_level = hub_api.create_rocon_gateway_key(self._unique_gateway_name, 'wireless:signal_level')
+            self._redis_server.set(wireless_signal_level, statistics.wireless_signal_level)
+            wireless_noise_level = hub_api.create_rocon_gateway_key(self._unique_gateway_name, 'wireless:noise_level')
+            self._redis_server.set(wireless_noise_level, statistics.wireless_noise_level)
+        except (redis.exceptions.ConnectionError, redis.exceptions.ResponseError):
+            rospy.logerr("Gateway: Unable to update network interface information")
+
+    def unregister_named_gateway(self, gateway_key):
+        '''
+          Remove all gateway info for given gateway key from the hub.
+        '''
+        try:
+            gateway_keys = self._redis_server.keys(gateway_key + ":*")
+            pipe = self._redis_server.pipeline()
+            pipe.delete(*gateway_keys)
+            pipe.srem(self._redis_keys['gatewaylist'], gateway_key)
+            pipe.execute()
+        except (redis.exceptions.ConnectionError, redis.exceptions.ResponseError):
+            pass
+
+    def update_named_gateway_latency_stats(self, gateway_name, latency_stats):
+        '''
+          For a given gateway, update the latency statistics
+
+          #param gateway_name : gateway name, not the redis key
+          @type str
+          @param latency_stats : ping statistics to the gateway from the hub
+          @type list : 4-tuple of float values [min, avg, max, mean deviation]
+        '''
+        try:
+            min_latency_key = hub_api.create_rocon_gateway_key(gateway_name, 'latency:min')
+            avg_latency_key = hub_api.create_rocon_gateway_key(gateway_name, 'latency:avg')
+            max_latency_key = hub_api.create_rocon_gateway_key(gateway_name, 'latency:max')
+            mdev_latency_key = hub_api.create_rocon_gateway_key(gateway_name, 'latency:mdev')
+            self._redis_server.set(min_latency_key, latency_stats[0])
+            self._redis_server.set(avg_latency_key, latency_stats[1])
+            self._redis_server.set(max_latency_key, latency_stats[2])
+            self._redis_server.set(mdev_latency_key, latency_stats[3])
+        except (redis.exceptions.ConnectionError, redis.exceptions.ResponseError):
+            rospy.logerr("Gateway: unable to update latency stats for " + gateway_name)
+
+    def mark_named_gateway_available(self, gateway_key, available=True,
+                                     time_since_last_seen=0.0):
+        '''
+          This function is used by the hub to mark if a gateway can be pinged.
+          If a gateway cannot be pinged, the hub indicates how longs has it been
+          since the hub was last seen
+
+          @param gateway_key : The gateway key (not the name)
+          @type str
+          @param available: If the gateway can be pinged right now
+          @type bool
+          @param time_since_last_seen: If available is false, how long has it
+                 been since the gateway was last seen (in seconds)
+          @type float
+        '''
+        available_key = gateway_key + ":available"
+        self._redis_server.set(available_key, available)
+        time_since_last_seen_key = gateway_key + ":time_since_last_seen"
+        self._redis_server.set(time_since_last_seen_key, int(time_since_last_seen))
 
     ##########################################################################
     # Hub Data Retrieval
@@ -180,32 +281,79 @@ class GatewayHub(rocon_hub_client.Hub):
           @rtype gateway_msgs.RemotGateway or None
         '''
         firewall = self._redis_server.get(hub_api.create_rocon_gateway_key(gateway, 'firewall'))
-        ip = self._redis_server.get(hub_api.create_rocon_gateway_key(gateway, 'ip'))
         if firewall is None:
             return None  # equivalent to saying no gateway of this id found
-        else:
-            remote_gateway = gateway_msgs.RemoteGateway()
-            remote_gateway.name = gateway
-            remote_gateway.ip = ip
-            remote_gateway.firewall = True if int(firewall) else False
-            remote_gateway.public_interface = []
-            encoded_advertisements = self._redis_server.smembers(hub_api.create_rocon_gateway_key(gateway, 'advertisements'))
-            for encoded_advertisement in encoded_advertisements:
-                advertisement = utils.deserialize_connection(encoded_advertisement)
-                remote_gateway.public_interface.append(advertisement.rule)
-            remote_gateway.flipped_interface = []
-            encoded_flips = self._redis_server.smembers(hub_api.create_rocon_gateway_key(gateway, 'flips'))
-            for encoded_flip in encoded_flips:
-                [target_gateway, name, connection_type, node] = utils.deserialize(encoded_flip)
-                remote_rule = gateway_msgs.RemoteRule(target_gateway, gateway_msgs.Rule(connection_type, name, node))
-                remote_gateway.flipped_interface.append(remote_rule)
-            remote_gateway.pulled_interface = []
-            encoded_pulls = self._redis_server.smembers(hub_api.create_rocon_gateway_key(gateway, 'pulls'))
-            for encoded_pull in encoded_pulls:
-                [target_gateway, name, connection_type, node] = utils.deserialize(encoded_pull)
-                remote_rule = gateway_msgs.RemoteRule(target_gateway, gateway_msgs.Rule(connection_type, name, node))
-                remote_gateway.pulled_interface.append(remote_rule)
+        ip = self._redis_server.get(hub_api.create_rocon_gateway_key(gateway, 'ip'))
+        if ip is None:
+            return None  # hub information not available/correct
+        remote_gateway = gateway_msgs.RemoteGateway()
+        remote_gateway.name = gateway
+        remote_gateway.ip = ip
+        remote_gateway.firewall = True if int(firewall) else False
+        remote_gateway.public_interface = []
+        encoded_advertisements = self._redis_server.smembers(
+            hub_api.create_rocon_gateway_key(gateway, 'advertisements'))
+        for encoded_advertisement in encoded_advertisements:
+            advertisement = utils.deserialize_connection(encoded_advertisement)
+            remote_gateway.public_interface.append(advertisement.rule)
+        remote_gateway.flipped_interface = []
+        encoded_flips = self._redis_server.smembers(hub_api.create_rocon_gateway_key(gateway, 'flips'))
+        for encoded_flip in encoded_flips:
+            [target_gateway, name, connection_type, node] = utils.deserialize(encoded_flip)
+            remote_rule = gateway_msgs.RemoteRule(target_gateway, gateway_msgs.Rule(connection_type, name, node))
+            remote_gateway.flipped_interface.append(remote_rule)
+        remote_gateway.pulled_interface = []
+        encoded_pulls = self._redis_server.smembers(hub_api.create_rocon_gateway_key(gateway, 'pulls'))
+        for encoded_pull in encoded_pulls:
+            [target_gateway, name, connection_type, node] = utils.deserialize(encoded_pull)
+            remote_rule = gateway_msgs.RemoteRule(target_gateway, gateway_msgs.Rule(connection_type, name, node))
+            remote_gateway.pulled_interface.append(remote_rule)
+
+        # Gateway health/network connection statistics indicators
+        gateway_available_key = hub_api.create_rocon_gateway_key(gateway, 'available')
+        remote_gateway.conn_stats.gateway_available = \
+            self._parse_redis_bool(self._redis_server.get(gateway_available_key))
+        time_since_last_seen_key = hub_api.create_rocon_gateway_key(gateway, 'time_since_last_seen')
+        remote_gateway.conn_stats.time_since_last_seen = \
+            self._parse_redis_int(self._redis_server.get(time_since_last_seen_key))
+
+        ping_latency_min_key = hub_api.create_rocon_gateway_key(gateway, 'latency:min')
+        remote_gateway.conn_stats.ping_latency_min = \
+            self._parse_redis_float(self._redis_server.get(ping_latency_min_key))
+        ping_latency_max_key = hub_api.create_rocon_gateway_key(gateway, 'latency:max')
+        remote_gateway.conn_stats.ping_latency_max = \
+            self._parse_redis_float(self._redis_server.get(ping_latency_max_key))
+        ping_latency_avg_key = hub_api.create_rocon_gateway_key(gateway, 'latency:avg')
+        remote_gateway.conn_stats.ping_latency_avg = \
+            self._parse_redis_float(self._redis_server.get(ping_latency_avg_key))
+        ping_latency_mdev_key = hub_api.create_rocon_gateway_key(gateway, 'latency:mdev')
+        remote_gateway.conn_stats.ping_latency_mdev = \
+            self._parse_redis_float(self._redis_server.get(ping_latency_mdev_key))
+
+        # Gateway network connection indicators
+        network_info_available_key = hub_api.create_rocon_gateway_key(gateway, 'network:info_available')
+        remote_gateway.conn_stats.network_info_available = \
+            self._parse_redis_bool(self._redis_server.get(network_info_available_key))
+        if not remote_gateway.conn_stats.network_info_available:
             return remote_gateway
+        network_type_key = hub_api.create_rocon_gateway_key(gateway, 'network:type')
+        remote_gateway.conn_stats.network_type = \
+            self._parse_redis_int(self._redis_server.get(network_type_key))
+        if remote_gateway.conn_stats.network_type == gateway_msgs.RemoteGateway.WIRED:
+            return remote_gateway
+        wireless_bitrate_key = hub_api.create_rocon_gateway_key(gateway, 'wireless:bitrate')
+        remote_gateway.conn_stats.wireless_bitrate = \
+            self._parse_redis_float(self._redis_server.get(wireless_bitrate_key))
+        wireless_link_quality_key = hub_api.create_rocon_gateway_key(gateway, 'wireless:quality')
+        remote_gateway.conn_stats.wireless_link_quality = \
+            self._parse_redis_int(self._redis_server.get(wireless_link_quality_key))
+        wireless_signal_level_key = hub_api.create_rocon_gateway_key(gateway, 'wireless:signal_level')
+        remote_gateway.conn_stats.wireless_signal_level = \
+            self._parse_redis_float(self._redis_server.get(wireless_signal_level_key))
+        wireless_noise_level_key = hub_api.create_rocon_gateway_key(gateway, 'wireless:noise_level')
+        remote_gateway.conn_stats.wireless_noise_level = \
+            self._parse_redis_float(self._redis_server.get(wireless_noise_level_key))
+        return remote_gateway
 
     def list_remote_gateway_names(self):
         '''
@@ -222,7 +370,10 @@ class GatewayHub(rocon_hub_client.Hub):
             for gateway in gateway_keys:
                 if hub_api.key_base_name(gateway) != self._unique_gateway_name:
                     gateways.append(hub_api.key_base_name(gateway))
-        except redis.ConnectionError as unused_e:
+        except (redis.ConnectionError, AttributeError) as unused_e:
+            # redis misbehaves a little here, sometimes it doesn't catch a disconnection properly
+            # see https://github.com/robotics-in-concert/rocon_multimaster/issues/251 so it
+            # pops up as an AttributeError
             pass
         return gateways
 
@@ -251,7 +402,7 @@ class GatewayHub(rocon_hub_client.Hub):
         weak_matches = []
         try:
             for remote_gateway in self.list_remote_gateway_names():
-                if re.match(gateway, rocon_utilities.gateway_basename(remote_gateway)):
+                if re.match(gateway, rocon_gateway_utils.gateway_basename(remote_gateway)):
                     weak_matches.append(remote_gateway)
         except HubConnectionLostError:
             raise
@@ -269,10 +420,14 @@ class GatewayHub(rocon_hub_client.Hub):
        '''
         connections = utils.create_empty_connection_type_dictionary()
         key = hub_api.create_rocon_gateway_key(remote_gateway, 'advertisements')
-        public_interface = self._redis_server.smembers(key)
-        for connection_str in public_interface:
-            connection = utils.deserialize_connection(connection_str)
-            connections[connection.rule.type].append(connection)
+        try:
+            public_interface = self._redis_server.smembers(key)
+            for connection_str in public_interface:
+                connection = utils.deserialize_connection(connection_str)
+                connections[connection.rule.type].append(connection)
+        except redis.exceptions.ConnectionError:
+            # will arrive here if the hub happens to have been lost last update and arriving here
+            pass
         return connections
 
     def get_remote_gateway_firewall_flag(self, gateway):
@@ -293,6 +448,40 @@ class GatewayHub(rocon_hub_client.Hub):
             return True if int(firewall) else False
         else:
             raise GatewayUnavailableError
+
+    def get_local_advertisements(self):
+        '''
+          Retrieves the local list of advertisements from the hub. This
+          gets used to sync across multiple hubs.
+
+          @return dictionary of remote advertisements
+          @rtype dictionary of connection type keyed connection values
+       '''
+        connections = utils.create_empty_connection_type_dictionary()
+        key = hub_api.create_rocon_gateway_key(self._unique_gateway_name, 'advertisements')
+        public_interface = self._redis_server.smembers(key)
+        for connection_str in public_interface:
+            connection = utils.deserialize_connection(connection_str)
+            connections[connection.rule.type].append(connection)
+        return connections
+
+    def _parse_redis_float(self, val):
+        if val:
+            return float(val)
+        else:
+            return 0.0
+
+    def _parse_redis_int(self, val):
+        if val:
+            return int(val)
+        else:
+            return 0.0
+
+    def _parse_redis_bool(self, val):
+        if val and (val == 'True' or val):
+            return True
+        else:
+            return False
 
     ##########################################################################
     # Posting Information to the Hub
@@ -400,10 +589,131 @@ class GatewayHub(rocon_hub_client.Hub):
         self._redis_server.srem(key, serialized_data)
 
     ##########################################################################
-    # Gateway-Gateway Communications
+    # Flip specific communication
     ##########################################################################
 
-    def send_flip_request(self, remote_gateway, connection):
+    def _resend_all_flip_ins(self):
+        '''
+          Marks all flip ins to be resent. Until these flips are resent, they
+          will not be processed
+        '''
+        key = hub_api.create_rocon_gateway_key(self._unique_gateway_name, 'flip_ins')
+        encoded_flip_ins = []
+        try:
+            encoded_flip_ins = self._redis_server.smembers(key)
+            self._redis_server.delete(key)
+            for flip_in in encoded_flip_ins:
+                status, source, connection_list = utils.deserialize_request(flip_in)
+                connection = utils.get_connection_from_list(connection_list)
+                status = FlipStatus.RESEND
+                serialized_data = utils.serialize_connection_request(status,
+                                                                     source,
+                                                                     connection)
+                self._redis_server.sadd(key, serialized_data)
+        except (redis.ConnectionError, AttributeError) as unused_e:
+            # probably disconnected from the hub
+            pass
+
+    def get_unblocked_flipped_in_connections(self):
+        '''
+          Returns all unblocked flips (accepted or pending) that have been
+          requested through this hub
+        '''
+        registrations = []
+        key = hub_api.create_rocon_gateway_key(self._unique_gateway_name, 'flip_ins')
+        encoded_flip_ins = []
+        try:
+            encoded_flip_ins = self._redis_server.smembers(key)
+        except (redis.ConnectionError, AttributeError) as unused_e:
+            # probably disconnected from the hub
+            pass
+        for flip_in in encoded_flip_ins:
+            status, source, connection_list = utils.deserialize_request(flip_in)
+            if source not in self.list_remote_gateway_names():
+                continue
+            connection = utils.get_connection_from_list(connection_list)
+            connection = utils.decrypt_connection(connection, self.private_key)
+            if status != FlipStatus.BLOCKED and status != FlipStatus.RESEND:
+                registrations.append(utils.Registration(connection, source))
+        return registrations
+
+    def block_flip_request(self, registration):
+        ''' Convenience wrapper for updating flip request status '''
+        return self._update_flip_request_status(registration, FlipStatus.BLOCKED)
+
+    def accept_flip_request(self, registration):
+        ''' Convenience wrapper for updating flip request status '''
+        return self._update_flip_request_status(registration, FlipStatus.ACCEPTED)
+
+    def _update_flip_request_status(self, registration, status):
+        '''
+          Updates the flip request status for this hub
+
+          @param registration : the flip registration for which we are updating status
+          @type utils.Registration
+
+          @param status : pending/accepted/blocked
+          @type same as gateway_msgs.msg.RemoteRuleWithStatus.status
+
+          @return True if this hub was used to send the flip request, and the status was updated. False otherwise.
+          @rtype Boolean
+        '''
+        result = False
+        hub_found = False
+        key = hub_api.create_rocon_gateway_key(self._unique_gateway_name, 'flip_ins')
+        try:
+            encoded_flip_ins = self._redis_server.smembers(key)
+            for flip_in in encoded_flip_ins:
+                unused_old_status, source, connection_list = utils.deserialize_request(flip_in)
+                connection = utils.get_connection_from_list(connection_list)
+                connection = utils.decrypt_connection(connection, self.private_key)
+                if source == registration.remote_gateway and connection == registration.connection:
+                    self._redis_server.srem(key, flip_in)
+                    hub_found = True
+            if hub_found:
+                encrypted_connection = utils.encrypt_connection(registration.connection,
+                                                                self.private_key)
+                serialized_data = utils.serialize_connection_request(status,
+                                                                     registration.remote_gateway,
+                                                                     encrypted_connection)
+                self._redis_server.sadd(key, serialized_data)
+                result = True
+        except redis.exceptions.ConnectionError:
+            # Means the hub has gone down (typically on shutdown so just be quiet)
+            # If we really need to know that a hub is crashed, change this policy
+            pass
+        return result
+
+    def get_flip_request_status(self, remote_gateway, rule, source_gateway=None):
+        '''
+          Get the status of a flipped registration. If the flip request does not
+          exist (for instance, in the case where this hub was not used to send
+          the request), then None is returned
+
+          @return the flip status or None
+          @rtype same as gateway_msgs.msg.RemoteRuleWithStatus.status or None
+        '''
+        if source_gateway is None:
+            source_gateway = self._unique_gateway_name
+        key = hub_api.create_rocon_gateway_key(remote_gateway, 'flip_ins')
+        encoded_flips = []
+        try:
+            encoded_flips = self._redis_server.smembers(key)
+        except (redis.ConnectionError, AttributeError) as unused_e:
+            # probably disconnected from the hub
+            pass
+        for flip in encoded_flips:
+            status, source, connection_list = utils.deserialize_request(flip)
+            if source != source_gateway:
+                continue
+            connection = utils.get_connection_from_list(connection_list)
+            # Compare rules as xmlrpc_uri and type_info are encrypted
+            if connection.rule == rule:
+                return status
+        # Probably, this hub was not used to send this flip request
+        return None
+
+    def send_flip_request(self, remote_gateway, connection, timeout=15.0):
         '''
           Sends a message to the remote gateway via redis pubsub channel. This is called from the
           watcher thread, when a flip rule gets activated.
@@ -430,12 +740,32 @@ class GatewayHub(rocon_hub_client.Hub):
           @param xmlrpc_uri : the node uri
           @param str
         '''
+        key = hub_api.create_rocon_gateway_key(remote_gateway, 'flip_ins')
         source = hub_api.key_base_name(self._redis_keys['gateway'])
-        cmd = utils.serialize_connection_request('flip', source, connection)
-        try:
-            self._redis_server.publish(hub_api.create_rocon_key(remote_gateway), cmd)
-        except Exception as unused_e:
+
+        # Check if a flip request already exists on the hub
+        if self.get_flip_request_status(remote_gateway, connection.rule) is not None:
+            return True
+
+        # Encrypt the transmission
+        start_time = time.time()
+        while time.time() - start_time <= timeout:
+            remote_gateway_public_key_str = self._redis_server.get(
+                hub_api.create_rocon_gateway_key(remote_gateway, 'public_key'))
+            if remote_gateway_public_key_str is not None:
+                break
+        if remote_gateway_public_key_str is None:
+            rospy.logerr("Gateway : flip to " + remote_gateway +
+                         " failed as public key not found")
             return False
+
+        remote_gateway_public_key = utils.deserialize_key(remote_gateway_public_key_str)
+        encrypted_connection = utils.encrypt_connection(connection, remote_gateway_public_key)
+
+        # Send data
+        serialized_data = utils.serialize_connection_request(
+            FlipStatus.PENDING, source, encrypted_connection)
+        self._redis_server.sadd(key, serialized_data)
         return True
 
     def send_unflip_request(self, remote_gateway, rule):
@@ -471,10 +801,27 @@ class GatewayHub(rocon_hub_client.Hub):
             self._send_unflip_request(remote_gateway, rule)
 
     def _send_unflip_request(self, remote_gateway, rule):
-        source = hub_api.key_base_name(self._redis_keys['gateway'])
-        cmd = utils.serialize_rule_request('unflip', source, rule)
+        '''
+          Unflip a previously flipped registration. If the flip request does not
+          exist (for instance, in the case where this hub was not used to send
+          the request), then False is returned
+
+          @return True if the flip existed and was removed, False otherwise
+          @rtype Boolean
+        '''
+        key = hub_api.create_rocon_gateway_key(remote_gateway, 'flip_ins')
         try:
-            self._redis_server.publish(hub_api.create_rocon_key(remote_gateway), cmd)
-        except Exception as unused_e:
-            return False
-        return True
+            encoded_flip_ins = self._redis_server.smembers(key)
+            for flip_in in encoded_flip_ins:
+                unused_status, source, connection_list = utils.deserialize_request(flip_in)
+                connection = utils.get_connection_from_list(connection_list)
+                if source == hub_api.key_base_name(self._redis_keys['gateway']) and \
+                   rule == connection.rule:
+                    self._redis_server.srem(key, flip_in)
+                    return True
+        except redis.exceptions.ConnectionError:
+            # usually just means the hub has gone down just before us or is in the
+            # middle of doing so let it die nice and peacefully
+            if not rospy.is_shutdown():
+                rospy.logwarn("Gateway : hub connection error while sending unflip request.")
+        return False

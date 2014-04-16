@@ -1,13 +1,15 @@
 #!/usr/bin/env python
 #
 # License: BSD
-#   https://raw.github.com/robotics-in-concert/rocon_multimaster/master/rocon_gateway/LICENSE
+#   https://raw.github.com/robotics-in-concert/rocon_multimaster/license/LICENSE
 #
 
-import rospy
 import re
+
+import rospy
 from gateway_msgs.msg import Rule, RemoteRule
-import utils
+
+from . import utils
 
 ###############################################################################
 # Functions
@@ -43,7 +45,9 @@ def setup_ros_parameters():
     # The gateway can automagically detect zeroconf, but sometimes you want to force it off
     param['disable_zeroconf'] = rospy.get_param('~disable_zeroconf', False)
 
-    # The gateway uses uui'd to guarantee uniqueness, but this can be disabled if you want clean names without uuid's (but you have to manually guarantee uniqueness)
+    # The gateway uses uui'd to guarantee uniqueness, but this can be disabled
+    # if you want clean names without uuid's (but you have to manually
+    # guarantee uniqueness)
     param['disable_uuids'] = rospy.get_param('~disable_uuids', False)
 
     # Make everything publicly available (excepting the default blacklist)
@@ -53,6 +57,15 @@ def setup_ros_parameters():
     param['default_advertisements'] = rospy.get_param('~default_advertisements', [])  # list of Rule objects
     param['default_flips'] = rospy.get_param('~default_flips', [])  # list of RemoteRule objects
     param['default_pulls'] = rospy.get_param('~default_pulls', [])  # list of RemoteRule objects
+
+    # Network interface name (to be used when there are multiple active interfaces))
+    param['network_interface'] = rospy.get_param('~network_interface', '')  # string
+
+    # Let an external party (e.g. concert conductor) manually shutdown the gateway
+    # so we can have control over when flips and pulls get deregistered (lets us do last
+    # minute service calls across masters before our own master goes down)
+    param['external_shutdown'] = rospy.get_param('~external_shutdown', False)
+    param['external_shutdown_timeout'] = rospy.get_param('~external_shutdown_timeout', 15)  # seconds
 
     return param
 
@@ -99,12 +112,12 @@ def generate_remote_rules(param):
             # maybe also check for '' here?
             node = None if pattern.match(remote_rule['rule']['node']) else remote_rule['rule']['node']
             remote_rules.append(RemoteRule(remote_rule['gateway'],
-                                       Rule(remote_rule['rule']['type'],
-                                            remote_rule['rule']['name'],
-                                            node
-                                            )
-                                       )
-                            )
+                                           Rule(remote_rule['rule']['type'],
+                                                remote_rule['rule']['name'],
+                                                node
+                                                )
+                                           )
+                                )
         else:
             all_targets.append(remote_rule['gateway'])
     return remote_rules, all_targets

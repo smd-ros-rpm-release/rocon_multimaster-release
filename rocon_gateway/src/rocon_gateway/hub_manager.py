@@ -1,20 +1,21 @@
 #!/usr/bin/env pythonupdate
 #
 # License: BSD
-#   https://raw.github.com/robotics-in-concert/rocon_multimaster/hydro_devel/hub_manager/LICENSE
+#   https://raw.github.com/robotics-in-concert/rocon_multimaster/license/LICENSE
 #
 ###############################################################################
 # Imports
 ###############################################################################
 
 import threading
+
 import rospy
 import gateway_msgs.msg as gateway_msgs
 import rocon_hub_client
 
-# local imports
 from .exceptions import GatewayUnavailableError
-import gateway_hub
+from . import gateway_hub
+from . import utils
 
 ##############################################################################
 # Hub Manager
@@ -82,6 +83,20 @@ class HubManager(object):
         self._hub_lock.release()
         return dic
 
+    def get_flip_requests(self):
+        '''
+          Returns all unblocked flip requests received by this hub
+
+          @return list of flip registration requests
+          @rtype list of utils.Registration
+        '''
+        registrations = []
+        self._hub_lock.acquire()
+        for hub in self.hubs:
+            registrations.extend(hub.get_unblocked_flipped_in_connections())
+        self._hub_lock.release()
+        return registrations
+
     def remote_gateway_info(self, remote_gateway_name):
         '''
           Return information that a remote gateway has posted on the hub(s).
@@ -98,7 +113,8 @@ class HubManager(object):
             if remote_gateway_name in hub.list_remote_gateway_names():
                 # I don't think we need more than one hub's info....
                 remote_gateway_info = hub.remote_gateway_info(remote_gateway_name)
-                break
+                if remote_gateway_info is not None:
+                    break
         self._hub_lock.release()
         return remote_gateway_info
 
@@ -128,8 +144,8 @@ class HubManager(object):
 
     def send_unflip_request(self, remote_gateway_name, remote_rule):
         '''
-          Send an unflip request to the specified gateway through
-          the first common hub that can be found.
+          Send an unflip request to the specified gateway through all available
+          hubs.
 
           Doesn't raise GatewayUnavailableError if nothing got sent as the higher level
           doesn't need any logic there yet (only called from gateway.shutdown).
@@ -143,11 +159,10 @@ class HubManager(object):
         self._hub_lock.acquire()
         for hub in self.hubs:
             if remote_gateway_name in hub.list_remote_gateway_names():
-                # I don't think we need more than one hub's info....
                 try:
-                    hub.send_unflip_request(remote_gateway_name, remote_rule)
-                    self._hub_lock.release()
-                    return
+                    if hub.send_unflip_request(remote_gateway_name, remote_rule):
+                        self._hub_lock.release()
+                        return
                 except GatewayUnavailableError:
                     pass  # cycle through the other hubs looking as well.
         self._hub_lock.release()
@@ -156,12 +171,30 @@ class HubManager(object):
     # Hub Connections
     ##########################################################################
 
-    def connect_to_hub(self, ip, port):
+    def connect_to_hub(self,
+                       ip,
+                       port,
+                       firewall_flag,
+                       gateway_unique_name,
+                       gateway_disengage_hub,  # hub connection lost hook
+                       gateway_ip,
+                       existing_advertisements
+                       ):
         '''
           Attempts to make a connection and register the gateway with a hub.
+          This is called from the gateway node's _register_gateway method.
 
           @param ip
           @param port
+          @param firewall_flag
+          @param gateway_unique_name
+          @param remote_gateway_request_callbacks
+          @type method : Gateway.remote_gateway_request_callbacks()
+          @param gateway_disengage_hub : this is the hub connection lost hook
+          @type method : Gateway.disengage_hub()
+          @param gateway_ip
+          @param existing advertisements
+          @type { utils.ConnectionTypes : utils.Connection[] }
 
           @return an integer indicating error (important for the service call)
           @rtype gateway_msgs.ErrorCodes
@@ -175,12 +208,20 @@ class HubManager(object):
         already_exists_error = False
         self._hub_lock.acquire()
         for hub in self.hubs:
-            if hub.uri == new_hub.uri:
+            if hub == new_hub:
                 already_exists_error = True
                 break
         self._hub_lock.release()
         if not already_exists_error:
             self._hub_lock.acquire()
+            new_hub.register_gateway(firewall_flag,
+                                     gateway_unique_name,
+                                     gateway_disengage_hub,  # hub connection lost hook
+                                     gateway_ip,
+                                     )
+            for connection_type in utils.connection_types:
+                for advertisement in existing_advertisements[connection_type]:
+                    new_hub.advertise(advertisement)
             self.hubs.append(new_hub)
             self._hub_lock.release()
             return new_hub, gateway_msgs.ErrorCodes.SUCCESS, "success"
@@ -196,9 +237,12 @@ class HubManager(object):
         '''
         #uri = str(ip) + ":" + str(port)
         # Could dig in and find the name here, but not worth the bother.
-        rospy.loginfo("Gateway : lost connection to the hub [%s][%s]" % (hub_to_be_disengaged.name, hub_to_be_disengaged.uri))
+        hub_to_be_disengaged.disconnect()  # necessary to kill failing socket receives
         self._hub_lock.acquire()
-        self.hubs[:] = [hub for hub in self.hubs if hub != hub_to_be_disengaged]
+        if hub_to_be_disengaged in self.hubs:
+            rospy.loginfo("Gateway : lost connection to the hub [%s][%s]" % (
+                hub_to_be_disengaged.name, hub_to_be_disengaged.uri))
+            self.hubs[:] = [hub for hub in self.hubs if hub != hub_to_be_disengaged]
         self._hub_lock.release()
 
     def advertise(self, connection):
@@ -229,3 +273,15 @@ class HubManager(object):
         matches = list(set(matches))
         weak_matches = list(set(weak_matches))
         return matches, weak_matches
+
+    def publish_network_statistics(self, statistics):
+        '''
+          Publish network statistics to every hub this gateway is connected to.
+
+          @param statistics
+          @type gateway_msgs.ConnectionStatistics
+        '''
+        self._hub_lock.acquire()
+        for hub in self.hubs:
+            hub.publish_network_statistics(statistics)
+        self._hub_lock.release()

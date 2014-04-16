@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 #
 # License: BSD
-#   https://raw.github.com/robotics-in-concert/rocon_multimaster/hydro-devel/rocon_gateway/LICENSE
+#   https://raw.github.com/robotics-in-concert/rocon_multimaster/license/LICENSE
 #
 
 ##############################################################################
@@ -10,10 +10,10 @@
 
 import copy
 import re
-import rocon_utilities
-# Local imports
-import utils
-import interactive_interface
+import rocon_gateway_utils
+
+from . import utils
+from . import interactive_interface
 
 ##############################################################################
 # Pulled Interface
@@ -21,11 +21,13 @@ import interactive_interface
 
 
 class PulledInterface(interactive_interface.InteractiveInterface):
+
     '''
       The pulled interface is the set of rules
       (pubs/subs/services/actions) and rules controlling pulls from
       other gateways.
     '''
+
     def __init__(self, default_rule_blacklist, default_rules, all_targets):
         '''
           Initialises the pulled interface.
@@ -62,21 +64,27 @@ class PulledInterface(interactive_interface.InteractiveInterface):
         pulled = utils.create_empty_connection_type_dictionary()
         new_pulls = utils.create_empty_connection_type_dictionary()
         removed_pulls = utils.create_empty_connection_type_dictionary()
-        diff = lambda l1,l2: [x for x in l1 if x not in l2] # diff of lists
+        diff = lambda l1, l2: [x for x in l1 if x not in l2]  # diff of lists
         self._lock.acquire()
         # Totally regenerate a new pulled interface, compare with old
         for remote_gateway in remote_connections.keys():
             connections = remote_connections[remote_gateway]
             for connection_type in connections:
                 for connection in connections[connection_type]:
-                    pulled[connection_type].extend(self._generate_pulls(connection.rule.type, connection.rule.name, connection.rule.node, remote_gateway, unique_name))
+                    pulled[connection_type].extend(
+                        self._generate_pulls(
+                            connection.rule.type,
+                            connection.rule.name,
+                            connection.rule.node,
+                            remote_gateway,
+                            unique_name))
         for connection_type in utils.connection_types:
             new_pulls[connection_type] = diff(pulled[connection_type], self.pulled[connection_type])
             removed_pulls[connection_type] = diff(self.pulled[connection_type], pulled[connection_type])
         self.pulled = copy.deepcopy(pulled)
         self._lock.release()
         return new_pulls, removed_pulls
-        
+
         # OPTIMISED METHOD
         #   Keep old rule state and old flip rules/patterns around
         #
@@ -98,30 +106,30 @@ class PulledInterface(interactive_interface.InteractiveInterface):
     ##########################################################################
     # Utility Methods
     ##########################################################################
-        
+
     def _generate_pulls(self, connection_type, name, node, gateway, unique_name):
         '''
-          Checks if a local rule (obtained from master.get_system_state) 
+          Checks if a local rule (obtained from master.get_system_state)
           is a suitable association with any of the rules or patterns. This can
-          return multiple matches, since the same local rule 
+          return multiple matches, since the same local rule
           properties can be multiply pulled to different remote gateways.
-            
+
           Used in the update() call above that is run in the watcher thread.
-          
+
           Note, don't need to lock here as the update() function takes care of it.
-          
+
           @param connection_type : rule type
           @type str : string constant from gateway_msgs.Rule
-          
+
           @param name : fully qualified topic, service or action name
           @type str
-          
+
           @param node : ros node name (coming from master.get_system_state)
           @type str
-          
+
           @param gateway : remote gateway hash name.
           @type str
-          
+
           @return all the pull rules that match this local rule
           @return list of RemoteRule objects updated with node names from self.watchlist
         '''
@@ -132,7 +140,7 @@ class PulledInterface(interactive_interface.InteractiveInterface):
             matched = False
             if gateway_match_result and gateway_match_result.group() == gateway:
                 matched = True
-            elif rule.gateway == rocon_utilities.gateway_basename(gateway):
+            elif rule.gateway == rocon_gateway_utils.gateway_basename(gateway):
                 matched = True
             if not matched:
                 continue
@@ -144,7 +152,7 @@ class PulledInterface(interactive_interface.InteractiveInterface):
                 rule_name = '/' + unique_name + '/' + rule.rule.name
                 matched = self.is_matched(rule, rule_name, name, node)
 
-            if not matched: 
+            if not matched:
                 rule_name = '/' + rule.rule.name
                 matched = self.is_matched(rule, rule_name, name, node)
 
@@ -155,16 +163,16 @@ class PulledInterface(interactive_interface.InteractiveInterface):
                 matched_pull.rule.node = node   # just in case we used a regex
                 matched_pull_rules.append(matched_pull)
         return matched_pull_rules
-    
+
     ##########################################################################
     # Pulled Interface Specific Methods
     ##########################################################################
-    
+
     def list_remote_gateway_names(self):
         '''
-          Collects all gateways that it should watch for (i.e. those 
+          Collects all gateways that it should watch for (i.e. those
           currently handled by existing registrations).
-          
+
           @return set of gateway string ids
           @rtype set of string
         '''

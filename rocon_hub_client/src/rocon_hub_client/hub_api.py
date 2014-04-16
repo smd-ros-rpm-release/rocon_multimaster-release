@@ -7,7 +7,6 @@
 # Imports
 ###############################################################################
 
-import redis
 import re
 
 ###############################################################################
@@ -62,20 +61,3 @@ def key_base_name(key):
       e.g. rocon:key:pirate24 -> pirate24
     '''
     return key.split(':')[-1]
-
-
-def ping_hub(ip, port):
-    '''
-      Pings the hub for identification. This is currently used
-      by the hub discovery module.
-
-      @return Bool
-    '''
-    try:
-        r = redis.Redis(host=ip, port=port)
-        name = r.get("rocon:hub:name")
-    except redis.exceptions.ConnectionError:
-        return False
-    if name is None:  # returns None if the server was there, but the key was not found.
-        return False
-    return True

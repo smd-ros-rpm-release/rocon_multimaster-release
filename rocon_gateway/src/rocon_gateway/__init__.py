@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 #
 # License: BSD
-#   https://raw.github.com/robotics-in-concert/rocon_multimaster/hydro-devel/rocon_gateway/LICENSE
+#   https://raw.github.com/robotics-in-concert/rocon_multimaster/license/LICENSE
 #
 
 # This is duplicated in the package.xml
@@ -22,5 +22,6 @@ from .gateway_node import GatewayNode
 from .graph import Graph
 import gateway
 from .gateway import Gateway
+from .network_interface_manager import NetworkInterfaceManager
 import samples
 import hub_manager

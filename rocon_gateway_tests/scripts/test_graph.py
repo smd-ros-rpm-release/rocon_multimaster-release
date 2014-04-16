@@ -9,12 +9,12 @@
 
 import rospy
 import sys
-import rocon_utilities.console as console
-import rocon_utilities
+import rocon_console.console as console
 from rocon_gateway import Graph
 from rocon_gateway import GatewayError
 import unittest
 import rosunit
+import rocon_gateway_utils
 
 ##############################################################################
 # Logging
@@ -39,7 +39,7 @@ class TestGraph(unittest.TestCase):
             printtest("Waiting for flips")
             self.graph.update()
             flips = self.graph._local_gateway.flip_watchlist
-            rospy.sleep(0.2)
+            rospy.rostime.wallsleep(0.2)
         printtest("********************************************************************")
         printtest("* Local Gateway")
         printtest("********************************************************************")
@@ -55,7 +55,7 @@ class TestGraph(unittest.TestCase):
         printtest("********************************************************************")
         printtest("%s" % self.graph._remote_gateways)
         for remote_gateway in self.graph._remote_gateways:
-            self.assertEquals("remote_gateway", rocon_utilities.gateway_basename(remote_gateway.name))
+            self.assertEquals("remote_gateway", rocon_gateway_utils.gateway_basename(remote_gateway.name))
 
     def tearDown(self):
         pass
