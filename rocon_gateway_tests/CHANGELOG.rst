@@ -1,6 +1,11 @@
 Changelog
 =========
 
+0.7.2 (2014-05-06)
+------------------
+* added missing zeroconf_avahi dependency.
+* relax timeout durations for tests.
+
 0.5.0 (2013-05-27 11:03)
 ------------------------
 * loading up the heavy tutorials.
@@ -54,39 +59,15 @@ Changelog
 * fix wiki links.
 * catkinized.
 
-0.2.1 (2012-12-24)
-------------------
-
-0.2.0 (2012-12-23 14:05)
-------------------------
-
-0.1.9 (2012-12-25)
-------------------
-
-0.1.8 (2012-12-23 13:59)
-------------------------
-
 0.1.7 (2012-12-13)
 ------------------
 * disabling tests temporarily.
-
-0.1.6 (2012-12-12)
-------------------
-
-0.1.5 (2012-12-09)
-------------------
-
-0.1.4 (2012-12-08)
-------------------
 
 0.1.3 (2012-12-07)
 ------------------
 * starting to get my head into rosgraph, about to apply.
 * pep8 and started adding a graph class (aka rosgraph.graph).
 * rocon_gateway_hub->rocon_hub, client also.
-
-0.1.2 (2012-11-24 18:09)
-------------------------
 
 0.1.1 (2012-11-24 15:57)
 ------------------------
