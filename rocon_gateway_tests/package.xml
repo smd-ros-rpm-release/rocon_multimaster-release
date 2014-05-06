@@ -1,6 +1,6 @@
 <package>
   <name>rocon_gateway_tests</name>
-  <version>0.7.0</version>
+  <version>0.7.2</version>
   <description>
     Testing programs for gateways.
   </description>
@@ -31,4 +31,5 @@
   <test_depend>roscpp_tutorials</test_depend>
   <test_depend>rospy_tutorials</test_depend>
   <test_depend>actionlib_tutorials</test_depend>
+  <test_depend>zeroconf_avahi</test_depend>
 </package>
