@@ -1,0 +1,12 @@
+Source: ros-indigo-rocon-gateway-tests
+Section: misc
+Priority: extra
+Maintainer: Daniel Stonier <d.stonier@gmail.com>
+Build-Depends: debhelper (>= 7.0.50~), ros-indigo-catkin, ros-indigo-rocon-test
+Homepage: http://ros.org/wiki/rocon_gateway_tests
+Standards-Version: 3.9.2
+
+Package: ros-indigo-rocon-gateway-tests
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, 
+Description: Testing programs for gateways.
