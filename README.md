@@ -1,3 +1,32 @@
+## rocon_multimaster (indigo) - 0.7.4-0
+
+The packages in the `rocon_multimaster` repository were released into the `indigo` distro by running `/usr/bin/bloom-release rocon_multimaster -t indigo -r indigo` on `Mon, 25 Aug 2014 08:29:18 -0000`
+
+These packages were released:
+- `rocon_gateway`
+- `rocon_gateway_tests`
+- `rocon_gateway_utils`
+- `rocon_hub`
+- `rocon_hub_client`
+- `rocon_multimaster`
+- `rocon_test`
+- `rocon_unreliable_experiments`
+
+Version of package(s) in repository `rocon_multimaster`:
+- upstream repository: https://github.com/robotics-in-concert/rocon_multimaster.git
+- release repository: https://github.com/yujinrobot-release/rocon_multimaster-release.git
+- rosdistro version: `0.7.3-0`
+- old version: `0.7.3-0`
+- new version: `0.7.4-0`
+
+Versions of tools used:
+- bloom version: `0.5.11`
+- catkin_pkg version: `0.2.4`
+- rosdep version: `0.10.30`
+- rosdistro version: `0.3.5`
+- vcstools version: `0.1.35`
+
+
 ## rocon_multimaster (indigo) - 0.7.3-0
 
 User `snorri@snorriheim` released the packages in the `rocon_multimaster` repository into the `indigo` distro by running `/usr/bin/bloom-release --track indigo --rosdistro indigo rocon_multimaster` on `Mon, 26 May 2014 13:52:19 -0000`
