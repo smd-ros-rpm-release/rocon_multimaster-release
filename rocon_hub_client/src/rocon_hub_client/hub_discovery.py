@@ -88,6 +88,7 @@ class HubDiscovery(threading.Thread):
                 # that have dropped out of wireless range.
                 #ErrorCodes.HUB_CONNECTION_UNRESOLVABLE
                 ]
+        unresolvable_hub = []
         while not rospy.is_shutdown() and not self._trigger_shutdown:
             self._discovered_hubs_modification_mutex.acquire()
             # Zeroconf scanning
@@ -97,9 +98,18 @@ class HubDiscovery(threading.Thread):
                     (ip, port) = _resolve_address(service)
                     service_uri = str(ip) + ':' + str(port)
                     if service_uri not in self._blacklisted_hubs.keys():
-                        rospy.loginfo("Gateway : discovered hub via zeroconf [%s:%s]" % (str(ip), str(port)))
-                        result, _ = self.discovery_update_hook(ip, port)
-                        if result in reasons_not_to_keep_scanning:
+                        result, reason = self.discovery_update_hook(ip, port)
+                        if result == ErrorCodes.HUB_CONNECTION_UNRESOLVABLE:
+                            if not service_uri in unresolvable_hub:
+                                rospy.loginfo("Gateway : unresolvable hub [%s]" % reason)
+                                unresolvable_hub.append(service_uri)
+                        elif result == ErrorCodes.SUCCESS:
+                            # we're good
+                            rospy.loginfo("Gateway : discovered hub via zeroconf [%s:%s]" % (str(ip), str(port)))
+                            if service_uri in unresolvable_hub:
+                               unresolvable_hub.remove(service_uri)
+                        else: # any of the other reasons not to keep scanning
+                            rospy.loginfo("Gateway : blacklisting hub [%s]" % reason)
                             self._zeroconf_discovered_hubs.append(service)
             # Direct scanning
             new_hubs, unused_lost_hubs = self._direct_scan()
@@ -264,7 +274,7 @@ def _zeroconf_services_available():
       Check for zeroconf services on startup. If none is found within a suitable
       timeout, disable this module.
     '''
-    zeroconf_timeout = 5  # Amount of time to wait for the zeroconf services to appear
+    zeroconf_timeout = 15  # Amount of time to wait for the zeroconf services to appear
     rospy.loginfo("Gateway : checking if zeroconf services are available...")
     try:
         rospy.wait_for_service("zeroconf/add_listener", timeout=zeroconf_timeout)
