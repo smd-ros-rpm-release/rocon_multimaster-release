@@ -1,6 +1,11 @@
 Changelog
 =========
 
+0.7.6 (2014-11-21)
+------------------
+* [rocon_gateway] bugfix gateway param setting
+* Contributors: Daniel Stonier
+
 0.7.5 (2014-09-23)
 ------------------
 * rename _ to reason
